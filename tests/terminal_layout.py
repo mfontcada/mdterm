@@ -1,6 +1,6 @@
 import os, pty, fcntl, termios, struct, subprocess, select, time, tempfile, re
 from pathlib import Path
-BINARY=str(Path(__file__).resolve().parents[1] / 'target/debug/mdterm')
+BINARY=str(Path(os.environ.get('MDTERM_BINARY', Path(__file__).resolve().parents[1] / 'target/debug/mdterm')).resolve())
 CSI=re.compile(r'\x1b\[([?0-9;]*)([A-Za-z])')
 class Terminal:
     def __init__(self, cwd, args=(), cols=100, rows=26):

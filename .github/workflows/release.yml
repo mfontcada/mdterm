@@ -1,0 +1,161 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: always
+  PYTHONDONTWRITEBYTECODE: '1'
+
+# Cost controls: public repositories only, standard runners, no Actions artifact
+# storage or dependency caches. Archives are uploaded directly to a draft Release.
+jobs:
+  prepare:
+    if: github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.metadata.outputs.tag }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Validate the package version and release tag
+        id: metadata
+        run: python3 scripts/release.py metadata >> "$GITHUB_OUTPUT"
+      - name: Prepare a draft release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
+        run: python3 scripts/release.py prepare --tag "$RELEASE_TAG"
+
+  build:
+    if: github.event.repository.private == false
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - runner: macos-15
+            target: aarch64-apple-darwin
+    env:
+      RUST_TARGET: ${{ matrix.target }}
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+      MDTERM_BINARY: ${{ github.workspace }}/target/${{ matrix.target }}/release/mdterm
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Install the Linux static linker
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes musl-tools
+      - name: Install the Rust toolchain
+        run: rustup toolchain install stable --profile minimal --target "$RUST_TARGET"
+      - name: Test and build the release executable
+        run: |
+          cargo +stable test --locked --release --target "$RUST_TARGET"
+          cargo +stable build --locked --release --target "$RUST_TARGET"
+      - name: Verify installation, version reporting, and terminal behavior
+        run: |
+          sh -n install.sh
+          python3 -m unittest discover -s tests -p 'test_*.py' -v
+          python3 tests/terminal_layout.py
+      - name: Package the executable
+        run: python3 scripts/release.py package --binary "$MDTERM_BINARY" --target "$RUST_TARGET" --directory "$RUNNER_TEMP/mdterm-packages"
+      - name: Upload directly to the draft release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: python3 scripts/release.py upload --tag "$RELEASE_TAG" --target "$RUST_TARGET" --directory "$RUNNER_TEMP/mdterm-packages"
+
+  publish:
+    if: github.event.repository.private == false && github.event_name == 'push'
+    needs: [prepare, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Verify all assets, add checksums and installer, and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: python3 scripts/release.py publish --tag "$RELEASE_TAG"
+
+  verify-download:
+    if: github.event.repository.private == false && github.event_name == 'push'
+    needs: [prepare, publish]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15-intel, macos-15]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Install from the public release and verify the installed executable
+        env:
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          MDTERM_VERSION: ${{ needs.prepare.outputs.tag }}
+        run: |
+          curl --fail --silent --show-error --location --retry 5 --retry-all-errors \
+            "https://github.com/$RELEASE_REPOSITORY/releases/download/$MDTERM_VERSION/install.sh" \
+            --output "$RUNNER_TEMP/mdterm-install.sh"
+          cmp install.sh "$RUNNER_TEMP/mdterm-install.sh"
+          export MDTERM_INSTALL_DIR="$RUNNER_TEMP/mdterm-installed/bin"
+          sh "$RUNNER_TEMP/mdterm-install.sh"
+          export MDTERM_BINARY="$MDTERM_INSTALL_DIR/mdterm"
+          test "$("$MDTERM_BINARY" --version)" = "mdterm ${MDTERM_VERSION#v}"
+          python3 tests/terminal_layout.py
+      - name: Verify the latest-release installation command
+        if: matrix.runner == 'ubuntu-24.04'
+        env:
+          RELEASE_REPOSITORY: ${{ github.repository }}
+        run: |
+          curl --fail --silent --show-error --location --retry 5 --retry-all-errors \
+            "https://github.com/$RELEASE_REPOSITORY/releases/latest/download/install.sh" \
+            --output "$RUNNER_TEMP/mdterm-latest-install.sh"
+          MDTERM_INSTALL_DIR="$RUNNER_TEMP/mdterm-latest/bin" sh "$RUNNER_TEMP/mdterm-latest-install.sh"
+          "$RUNNER_TEMP/mdterm-latest/bin/mdterm" --version

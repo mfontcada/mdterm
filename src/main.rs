@@ -676,8 +676,12 @@ fn paint(out: &mut String, row: usize, col: usize, width: usize, text: &str, sty
 }
 
 fn main() {
-    let arg = env::args_os().nth(1).map(PathBuf::from);
-    let result = run(arg);
+    let arg = env::args_os().nth(1);
+    if arg.as_deref().is_some_and(|value| value == "--version" || value == "-V") {
+        println!("mdterm {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
+    let result = run(arg.map(PathBuf::from));
     if let Err(err) = result { eprintln!("mdterm: {err}"); process::exit(1); }
 }
 fn run(path: Option<PathBuf>) -> io::Result<()> {

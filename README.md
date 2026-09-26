@@ -4,27 +4,93 @@ A keyboard-driven Markdown and plain-text viewer/editor for Linux and macOS term
 
 ## Install
 
-With Rust and Cargo installed, run this from the project directory:
+Install the latest release:
 
 ```sh
-cargo install --path . --locked
+curl -fsSL https://github.com/mfontcada/mdterm/releases/latest/download/install.sh | sh
 ```
 
-This installs `mdterm` to `~/.cargo/bin` by default. You can then launch it from any directory:
+The installer downloads the executable for your platform, checks its SHA-256 checksum and version, and installs it into `~/.local/bin`. It requires a POSIX shell, `curl`, `tar`, and either `sha256sum` or `shasum`, normally provided by the operating system. Rust and sudo are not required. An existing installation is preserved if download or verification fails.
+
+| System | Supported CPUs | Release executable |
+| --- | --- | --- |
+| Linux | x86-64, ARM64 | Statically linked with musl; no glibc version dependency |
+| macOS 11 or later | Intel x86-64, Apple Silicon | Native executable for each CPU |
+
+The macOS binaries target macOS 11 and are tested on the GitHub-hosted macOS runners. They are not Apple Developer ID signed or notarized.
+
+If `~/.local/bin` is not on your `PATH`, run:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Add that line to your shell configuration (`~/.bashrc` for Bash or `~/.zshrc` for Zsh) to keep it across sessions. Putting this directory first also selects the new binary if you previously installed another copy with Cargo. Check with `command -v mdterm`.
+
+Launch from any directory:
 
 ```sh
 mdterm
 mdterm README.md
 mdterm /path/to/folder
+mdterm --version
 ```
 
-If your shell cannot find `mdterm`, add Cargo's binary directory to your `PATH`:
+### Update or choose a version
+
+Rerun the installation command to replace the executable with the latest stable release, then run `mdterm --version`. Updates run only when you request them.
+
+To install a specific release:
 
 ```sh
-export PATH="$HOME/.cargo/bin:$PATH"
+curl -fsSL https://github.com/mfontcada/mdterm/releases/latest/download/install.sh | MDTERM_VERSION=v0.1.0 sh
 ```
 
-Add that line to your shell configuration (for example, `~/.bashrc` for Bash) to keep it across sessions. After updating the source, rerun the install command to upgrade.
+To use a different installation directory:
+
+```sh
+curl -fsSL https://github.com/mfontcada/mdterm/releases/latest/download/install.sh | MDTERM_INSTALL_DIR="$HOME/bin" sh
+```
+
+### Manual download
+
+Download the archive for your platform and `SHA256SUMS` from [GitHub Releases](https://github.com/mfontcada/mdterm/releases/latest). The filenames use Rust target names: `x86_64` for Intel/AMD, `aarch64` for ARM64, `unknown-linux-musl` for Linux, and `apple-darwin` for macOS.
+
+Compute the archive's checksum with `sha256sum <archive>` on Linux or `shasum -a 256 <archive>` on macOS, and compare it with the matching entry in `SHA256SUMS`. For example, after verifying the Linux x86-64 archive:
+
+```sh
+tar -xzf mdterm-v0.1.0-x86_64-unknown-linux-musl.tar.gz
+mkdir -p "$HOME/.local/bin"
+install -m 755 mdterm "$HOME/.local/bin/mdterm"
+```
+
+Each archive contains the executable, this README, and the MIT license.
+
+### Uninstall
+
+Remove the executable from its installation directory:
+
+```sh
+rm "$HOME/.local/bin/mdterm"
+```
+
+Your documents are unaffected. If you installed with Cargo, use `cargo uninstall mdterm` instead.
+
+### Install with Cargo
+
+With Rust, Cargo, and your platform's build tools installed, you can build directly from GitHub without a manual clone:
+
+```sh
+cargo install --git https://github.com/mfontcada/mdterm --locked
+```
+
+Or, from a local checkout:
+
+```sh
+cargo install --path . --locked
+```
+
+Cargo installs into `~/.cargo/bin` by default; ensure that directory is on your `PATH`. Rerun the corresponding Cargo command to update that installation.
 
 ## Run from source
 
@@ -73,6 +139,27 @@ cargo run -- tests/fixtures/markdown-showcase.md
 cargo test
 cargo build
 python3 tests/terminal_layout.py
+python3 -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
 The checks run the executable in a pseudo-terminal to exercise pane alignment, focus, resize behavior, scrolling, editing, and unsaved-change prompts.
+
+Set `MDTERM_BINARY` to an absolute executable path to run terminal and installer checks against a release build. The installer checks use temporary directories and simulated downloads; they do not modify your home directory or contact GitHub. Release helper checks require Python 3.11 or later.
+
+## Publishing a release
+
+1. Update the package version in `Cargo.toml` and run `cargo check` to refresh the root package entry in `Cargo.lock`.
+2. Run the regression checks, commit the changes, and push `main`.
+3. Optionally run `gh workflow run release.yml --ref main` to validate all four platforms without publishing.
+4. Tag that commit with the matching stable version (`vMAJOR.MINOR.PATCH`) and push the tag. For example, after updating the package to `0.2.0`:
+
+   ```sh
+   git tag v0.2.0
+   git push origin v0.2.0
+   ```
+
+The release workflow builds and tests all four executables, then uploads their archives directly into a draft release. Once every build passes, it adds `SHA256SUMS` and `install.sh` and publishes the release. It then installs the public downloads and runs terminal checks on every platform. Follow progress in [Actions](https://github.com/mfontcada/mdterm/actions/workflows/release.yml).
+
+Failed builds leave the release unpublished. Rerunning a failed tagged workflow can resume the draft; published releases are never overwritten. Use a new version for changes to an already published release.
+
+The workflow runs only in public repositories, uses standard GitHub-hosted runners, and stores no Actions artifacts or dependency caches. Release files are hosted as GitHub Release assets. To block paid Actions usage, maintainers should keep an Actions budget of `$0` with **Stop usage when budget limit is reached** enabled in GitHub's billing settings.
