@@ -56,9 +56,17 @@ class ReleaseTests(unittest.TestCase):
                 release.verify_archive(path)
 
     def test_published_release_cannot_be_overwritten(self):
-        response = subprocess.CompletedProcess([], 0, json.dumps({"draft": False}), "")
+        response = subprocess.CompletedProcess([], 0, json.dumps([[{"draft": False, "tag_name": "v0.1.0"}]]), "")
         with patch.object(release, "gh", return_value=response), self.assertRaises(ValueError):
             release.release("v0.1.0")
+
+    def test_draft_release_is_found_across_pages(self):
+        draft = {"draft": True, "tag_name": "v0.1.0", "assets": []}
+        pages = [[{"draft": False, "tag_name": "v0.2.0"}], [draft]]
+        response = subprocess.CompletedProcess([], 0, json.dumps(pages), "")
+        with patch.object(release, "gh", return_value=response):
+            self.assertEqual(release.release("v0.1.0"), draft)
+            self.assertIsNone(release.release("v0.3.0", missing_ok=True))
 
     def test_incomplete_draft_cannot_be_published(self):
         with patch.object(release, "release", return_value={"assets": []}), patch.object(release, "gh") as cli:

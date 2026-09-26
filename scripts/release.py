@@ -94,12 +94,15 @@ def gh(*args, check=True):
 
 
 def release(tag, missing_ok=False):
-    result = gh("api", "--method", "GET", f"repos/{repository()}/releases/tags/{tag}", check=False)
-    if result.returncode:
-        if missing_ok and "HTTP 404" in result.stderr:
+    # The by-tag endpoint only returns published releases. Listing releases with
+    # write access also includes drafts, including those from earlier jobs.
+    pages = json.loads(gh("api", "--method", "GET", f"repos/{repository()}/releases",
+                          "--paginate", "--slurp").stdout)
+    data = next((item for page in pages for item in page if item["tag_name"] == tag), None)
+    if data is None:
+        if missing_ok:
             return None
-        raise RuntimeError(result.stderr.strip())
-    data = json.loads(result.stdout)
+        raise ValueError(f"Draft release not found: {tag}")
     if not data["draft"]:
         raise ValueError(f"{tag} is already published; published releases are never overwritten")
     return data
