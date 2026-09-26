@@ -1,0 +1,10 @@
+[package]
+name = "mdterm"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+comrak = { version = "0.55", default-features = false, features = ["shortcodes"] }
+scraper = { version = "0.27", default-features = false }
+unicode-segmentation = "1"
+unicode-width = "0.2"
